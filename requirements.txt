@@ -23,9 +23,9 @@ httpx>=0.25.0
 eth-account>=0.10.0
 web3>=6.11.0
 
-# Optional: Testing dependencies (uncomment if needed)
-# pytest>=7.4.0
-# pytest-asyncio>=0.21.0
+# Optional: Testing dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
 
 # Optional: Code quality tools (uncomment if needed)
 # black>=23.0.0

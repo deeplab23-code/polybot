@@ -41,11 +41,23 @@ class Config:
         self.POLY_CHAIN_ID = int(os.getenv("POLY_CHAIN_ID", "137"))
         
         # Trader Wallet Configuration
-        self.TRADER_WALLET = os.getenv("TRADER_WALLET")
+        self.TRADER_WALLET_RAW = os.getenv("TRADER_WALLET", "")
+        self.TRADER_WALLETS = [w.strip().lower() for w in self.TRADER_WALLET_RAW.split(",") if w.strip()]
         
         # Database Table Names
         self.TABLE_NAME_TRADES = os.getenv("TABLE_NAME_TRADES", "historic_trades")
         self.TABLE_NAME_POSITIONS = os.getenv("TABLE_NAME_POSITIONS", "polymarket_positions")
+
+        # Reliability Configuration
+        self.MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
+        self.RETRY_BACKOFF_FACTOR = float(os.getenv("RETRY_BACKOFF_FACTOR", "2.0"))
+        self.DEFAULT_SLIPPAGE = float(os.getenv("DEFAULT_SLIPPAGE", "0.01"))  # 1% default slippage
+        self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+        self.DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
+
+        # Telegram Notifications
+        self.TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
     
     def _load_sizing_config(self):
         """Load sizing configuration from environment or use defaults"""
@@ -71,8 +83,8 @@ class Config:
             errors.append("POLY_FUNDER is not set in .env file")
         
         # Check trader wallet configuration
-        if not self.TRADER_WALLET:
-            errors.append("TRADER_WALLET is not set in .env file")
+        if not self.TRADER_WALLETS:
+            errors.append("TRADER_WALLET is not set in .env file (provide at least one)")
         
         if errors:
             error_message = "\n❌ Configuration Errors:\n" + "\n".join(f"  - {error}" for error in errors)
@@ -100,7 +112,7 @@ class Config:
         print(f"📊 Supabase URL: {self.SUPABASE_URL}")
         print(f"🔗 CLOB API: {self.CLOB_API_URL}")
         print(f"⛓️  Chain ID: {self.POLY_CHAIN_ID}")
-        print(f"📈 Trader Wallet (to copy): {self.TRADER_WALLET[:10] if self.TRADER_WALLET else 'Not set'}...")
+        print(f"📈 Trader Wallets ({len(self.TRADER_WALLETS)}): {', '.join([w[:10]+'...' for w in self.TRADER_WALLETS])}")
         print(f"💰 Bankroll: ${self.get_bankroll()}")
         print(f"📊 Min Stake: ${self.STAKE_MIN}")
         print(f"📊 Max Stake: ${self.STAKE_MAX}")
@@ -121,11 +133,7 @@ def get_config() -> Config:
     """
     global _config
     if _config is None:
-        try:
-            _config = Config()
-        except ConfigError as e:
-            print(str(e))
-            sys.exit(1)
+        _config = Config()
     return _config
 
 
