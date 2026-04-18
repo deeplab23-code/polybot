@@ -12,6 +12,7 @@ from get_player_history_new import (
 )
 from constraints.sizing import sizing_constraints
 from constraints.risk_manager import check_risk_constraints
+from copied_trades import claim_trade, mark_trade, trader_exposure
 from py_clob_client.order_builder.constants import BUY, SELL
 from config import get_config
 from logger import logger
@@ -42,8 +43,8 @@ def is_target_trader(wallet: str) -> bool:
 async def handle_new_trade(payload):
     try:
         record = payload.get('data', {}).get('record', {})
-        proxy_wallet = record.get('proxy_wallet', '').lower()
-        
+        proxy_wallet = (record.get('proxy_wallet') or '').lower()
+
         # ONLY copy trades from target wallets
         if not is_target_trader(proxy_wallet):
             logger.debug(f"Ignoring trade from non-target wallet: {proxy_wallet}")
@@ -63,24 +64,41 @@ async def handle_new_trade(payload):
             logger.info(f"⏭️  Side is SELL, calculating proportional size...")
             data_trader = fetch_player_positions(user_address=proxy_wallet, condition_id=condition_id)
             data_myself = fetch_player_positions(user_address=config.POLY_FUNDER, condition_id=condition_id)
-            
+
             if data_trader and data_myself:
                 size_trader = float(data_trader[0].get('size', 0))
                 size_myself = float(data_myself[0].get('size', 0))
-                
+
                 if size_trader > 0:
                     percentage_position = usdc_size / size_trader
                     final_size = percentage_position * size_myself
                     logger.info(f"Selling {percentage_position*100:.2f}% of position: {final_size:.2f} units")
-                    return make_order(price=price, size=final_size, side=side, token_id=token_id)
+                    if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price,
+                                       final_size * price, condition_id):
+                        return None
+                    resp = make_order(price=price, size=final_size, side=side, token_id=token_id)
+                    mark_trade(transaction_hash,
+                               "submitted" if resp and resp.get("success") else "failed",
+                               resp.get("orderID") if resp else None)
+                    return resp
             return None
         else:
             bot_usdc_size = sizing_constraints(usdc_size)
-            if bot_usdc_size >= 1:
+            if bot_usdc_size > 0:
                 total_exp, market_exps = get_current_exposures(config.POLY_FUNDER)
-                if check_risk_constraints(total_exp, bot_usdc_size, market_exposure=market_exps.get(token_id, 0)):
+                t_exp = trader_exposure(proxy_wallet)
+                if check_risk_constraints(total_exp, bot_usdc_size,
+                                          market_exposure=market_exps.get(token_id, 0),
+                                          trader_exposure=t_exp):
+                    if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price,
+                                       bot_usdc_size, condition_id):
+                        return None
                     bot_size_units = bot_usdc_size / price
-                    return make_order(price=price, size=bot_size_units, side=side, token_id=token_id)
+                    resp = make_order(price=price, size=bot_size_units, side=side, token_id=token_id)
+                    mark_trade(transaction_hash,
+                               "submitted" if resp and resp.get("success") else "failed",
+                               resp.get("orderID") if resp else None)
+                    return resp
             return None
     except Exception as e:
         logger.error(f"❌ Error in handle_new_trade: {e}")
@@ -89,22 +107,25 @@ async def handle_new_trade(payload):
 async def handle_new_position(payload):
     try:
         record = payload.get('data', {}).get('record', {})
-        proxy_wallet = record.get('proxyWallet', '').lower()
-        
+        proxy_wallet = (record.get('proxy_wallet') or '').lower()
+
         if not is_target_trader(proxy_wallet):
             return None
 
         asset = record.get('asset')
-        initial_value = float(record.get('initialValue', 0))
-        avg_price = float(record.get('avgPrice', 0))
+        initial_value = float(record.get('initial_value', 0))
+        avg_price = float(record.get('avg_price', 0))
         title = record.get('title', 'N/A')
 
         logger.info(f"📈 New position from target: {proxy_wallet[:10]}... | {title}")
 
         bot_usdc_value = sizing_constraints(initial_value)
-        if bot_usdc_value >= 1:
+        if bot_usdc_value > 0:
             total_exp, market_exps = get_current_exposures(config.POLY_FUNDER)
-            if check_risk_constraints(total_exp, bot_usdc_value, market_exposure=market_exps.get(asset, 0)):
+            t_exp = trader_exposure(proxy_wallet)
+            if check_risk_constraints(total_exp, bot_usdc_value,
+                                      market_exposure=market_exps.get(asset, 0),
+                                      trader_exposure=t_exp):
                 bot_size_units = bot_usdc_value / avg_price
                 return make_order(price=avg_price, size=bot_size_units, side=BUY, token_id=asset)
         return None
@@ -115,7 +136,7 @@ async def handle_new_position(payload):
 async def handle_update_position(payload):
     try:
         new_record = payload.get('data', {}).get('record', {})
-        proxy_wallet = new_record.get('proxyWallet', '').lower()
+        proxy_wallet = (new_record.get('proxy_wallet') or '').lower()
         
         if not is_target_trader(proxy_wallet):
             return None
@@ -131,11 +152,16 @@ async def handle_update_position(payload):
         if abs(delta_value) < 1.0: return None
 
         logger.info(f"🔄 Update from target: {proxy_wallet[:10]}... | {title} | Delta: ${delta_value:+.2f}")
-        sized_delta = sizing_constraints(abs(delta_value))
-        
+
         if delta_value > 0:
+            sized_delta = sizing_constraints(abs(delta_value))
+            if sized_delta <= 0:
+                return None
             total_exp, market_exps = get_current_exposures(config.POLY_FUNDER)
-            if check_risk_constraints(total_exp, sized_delta, market_exposure=market_exps.get(asset, 0)):
+            t_exp = trader_exposure(proxy_wallet)
+            if check_risk_constraints(total_exp, sized_delta,
+                                      market_exposure=market_exps.get(asset, 0),
+                                      trader_exposure=t_exp):
                 bot_size_units = sized_delta / cur_price
                 return make_order(price=cur_price, size=bot_size_units, side=BUY, token_id=asset)
         else:

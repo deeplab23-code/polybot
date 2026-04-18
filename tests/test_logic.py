@@ -21,12 +21,15 @@ with patch('config.get_config', return_value=mock_config_obj):
     from constraints.risk_manager import check_risk_constraints
 
 def test_sizing_constraints():
-    # 1% of 1000 is 10, which is between 5 and 50
-    # We need to make sure the imported module uses our mock
     with patch('constraints.sizing.config', mock_config_obj):
+        # 1% of 1000 = 10, within [5, 50]
         assert sizing_constraints(1000) == 10.0
-        assert sizing_constraints(100) == 5.0
+        # 1% of 100 = 1, below STAKE_MIN (5) -> reject
+        assert sizing_constraints(100) == 0.0
+        # 1% of 10000 = 100, capped at STAKE_MAX (50)
         assert sizing_constraints(10000) == 50.0
+        # 1% of 500 = 5, exactly at floor -> allowed
+        assert sizing_constraints(500) == 5.0
 
 def test_risk_manager_total_exposure():
     with patch('constraints.risk_manager.config', mock_config_obj):

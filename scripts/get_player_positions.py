@@ -106,66 +106,32 @@ def transform_position_to_db_format(position: dict) -> dict:
 
 def insert_player_positions_batch(positions: list):
     """
-    Inserts or updates positions only if there are significant changes.
+    Bulk-upserts positions on the (proxy_wallet, asset) primary key in a single
+    round-trip, replacing the previous per-row SELECT-then-INSERT/UPDATE loop.
     """
     if not positions:
         logger.info("No positions to insert")
         return 0
 
-    success_count = 0
-    error_count = 0
-    skipped_count = 0
-    
-    for idx, position in enumerate(positions, 1):
+    rows = []
+    for position in positions:
         try:
-            db_position = transform_position_to_db_format(position)
-            asset_id = db_position['asset']
-            proxy_wallet = db_position['proxy_wallet']
-            
-            existing = supabase.table(TABLE_NAME).select("*").eq(
-                "asset", asset_id
-            ).eq(
-                "proxy_wallet", proxy_wallet
-            ).execute()
-            
-            if not existing.data or len(existing.data) == 0:
-                supabase.table(TABLE_NAME).insert(db_position).execute()
-                success_count += 1
-                logger.info(f"➕ New position inserted: {db_position['title'][:50]}")
-            else:
-                old_data = existing.data[0]
-                fields_to_compare = ['size']
-                
-                has_changes = False
-                for field in fields_to_compare:
-                    old_val = old_data.get(field)
-                    new_val = db_position.get(field)
-                    
-                    if isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)):
-                        if abs(old_val - new_val) > 0.1:
-                            has_changes = True
-                            break
-                    elif old_val != new_val:
-                        has_changes = True
-                        break
-                
-                if has_changes:
-                    supabase.table(TABLE_NAME).update(db_position).eq(
-                        "asset", asset_id
-                    ).eq(
-                        "proxy_wallet", proxy_wallet
-                    ).execute()
-                    success_count += 1
-                    logger.info(f"🔄 Position updated: {db_position['title'][:50]}")
-                else:
-                    skipped_count += 1
-                    
+            rows.append(transform_position_to_db_format(position))
         except Exception as e:
-            error_count += 1
-            logger.error(f"❌ Error in position {idx}/{len(positions)}: {e}")
-    
-    logger.info(f"✅ Summary: {success_count} inserted/updated, {skipped_count} skipped, {error_count} errors")
-    return success_count
+            logger.error(f"❌ Error transforming position: {e}")
+
+    if not rows:
+        return 0
+
+    try:
+        supabase.table(TABLE_NAME).upsert(
+            rows, on_conflict="proxy_wallet,asset"
+        ).execute()
+        logger.info(f"✅ Upserted {len(rows)} positions")
+        return len(rows)
+    except Exception as e:
+        logger.error(f"❌ Bulk upsert failed ({len(rows)} rows): {e}")
+        return 0
 
 def print_positions_readable(positions: list):
     if not positions:

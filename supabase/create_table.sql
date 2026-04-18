@@ -68,3 +68,22 @@ GENERATED ALWAYS AS (
 ) STORED;
 
 CREATE UNIQUE INDEX idx_unique_activity_key ON historic_trades (unique_activity_key);
+
+
+-- Ledger of trades the bot has already copied. Keyed on source trade hash so
+-- Realtime replays or duplicate polling inserts cannot trigger a second order.
+CREATE TABLE copied_trades (
+    transaction_hash  VARCHAR(255) PRIMARY KEY,
+    source_wallet     VARCHAR(255) NOT NULL,
+    asset             TEXT         NOT NULL,
+    condition_id      VARCHAR(255),
+    side              VARCHAR(10)  NOT NULL,
+    price             NUMERIC(20, 10),
+    bot_usdc_size     NUMERIC(20, 6),
+    order_id          VARCHAR(255),
+    status            VARCHAR(32)  NOT NULL DEFAULT 'submitted',
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_copied_trades_source_wallet ON copied_trades (source_wallet);
+CREATE INDEX idx_copied_trades_asset         ON copied_trades (asset);
