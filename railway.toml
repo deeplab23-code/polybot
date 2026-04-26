@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "cd scripts && python main.py"
+restartPolicyType = "always"
+restartPolicyMaxRetries = 10
