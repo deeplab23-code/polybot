@@ -69,28 +69,37 @@ def fetch_activities(user_address: str, limit: int = 500, offset: int = 0):
     return db_activities
 
 
+def _get_existing_hashes(hashes: list) -> set:
+    """
+    Consulta Supabase en chunks de 100 para evitar el límite de .in_()
+    """
+    existing = set()
+    chunk_size = 100
+    for i in range(0, len(hashes), chunk_size):
+        chunk = hashes[i:i + chunk_size]
+        result = supabase.table(TABLE_NAME)\
+            .select("transaction_hash")\
+            .in_("transaction_hash", chunk)\
+            .execute()
+        for r in result.data:
+            existing.add(r['transaction_hash'])
+    return existing
+
+
 def insert_activities_batch(activities: list):
     """
-    Insert only genuinely new activities into the database.
+    Insert only genuinely new activities.
     Uses INSERT (not upsert) so Supabase Realtime fires correctly.
     """
     if not activities:
         return 0
 
-    # Obtener hashes de las actividades a procesar
     hashes = [a['transaction_hash'] for a in activities if a.get('transaction_hash')]
     if not hashes:
         return 0
 
-    # Verificar cuáles ya existen en Supabase
-    existing = supabase.table(TABLE_NAME)\
-        .select("transaction_hash")\
-        .in_("transaction_hash", hashes)\
-        .execute()
+    existing_hashes = _get_existing_hashes(hashes)
 
-    existing_hashes = {r['transaction_hash'] for r in existing.data}
-
-    # Solo las genuinamente nuevas
     new_activities = [
         a for a in activities
         if a.get('transaction_hash') not in existing_hashes
