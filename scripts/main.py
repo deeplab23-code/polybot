@@ -178,29 +178,48 @@ async def handle_update_position(payload):
         logger.error(f"❌ Error in handle_update_position: {e}")
         return None
 
+# ─── FIX: Async callbacks con wrapper para librería realtime ────────────────
+
+async def listen_to_trades():
+    logger.info(f"🔍 Monitoring {TABLE_NAME_TRADES} (INSERT)")
+    supabase = await get_supabase()
+    loop = asyncio.get_event_loop()
+    def callback(payload):
+        loop.call_soon_threadsafe(
+            asyncio.ensure_future, handle_new_trade(payload)
+        )
+    await supabase.channel("trades-inserts").on_postgres_changes(
+        "INSERT", schema="public", table=TABLE_NAME_TRADES, callback=callback
+    ).subscribe()
+    while True: await asyncio.sleep(1)
+
 async def listen_to_positions():
     logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (INSERT)")
     supabase = await get_supabase()
+    loop = asyncio.get_event_loop()
+    def callback(payload):
+        loop.call_soon_threadsafe(
+            asyncio.ensure_future, handle_new_position(payload)
+        )
     await supabase.channel("positions-inserts").on_postgres_changes(
-        "INSERT", schema="public", table=TABLE_NAME_POSITIONS, callback=handle_new_position
+        "INSERT", schema="public", table=TABLE_NAME_POSITIONS, callback=callback
     ).subscribe()
     while True: await asyncio.sleep(1)
 
 async def listen_to_updates():
     logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (UPDATE)")
     supabase = await get_supabase()
+    loop = asyncio.get_event_loop()
+    def callback(payload):
+        loop.call_soon_threadsafe(
+            asyncio.ensure_future, handle_update_position(payload)
+        )
     await supabase.channel("positions-updates").on_postgres_changes(
-        "UPDATE", schema="public", table=TABLE_NAME_POSITIONS, callback=handle_update_position
+        "UPDATE", schema="public", table=TABLE_NAME_POSITIONS, callback=callback
     ).subscribe()
     while True: await asyncio.sleep(1)
 
-async def listen_to_trades():
-    logger.info(f"🔍 Monitoring {TABLE_NAME_TRADES} (INSERT)")
-    supabase = await get_supabase()
-    await supabase.channel("trades-inserts").on_postgres_changes(
-        "INSERT", schema="public", table=TABLE_NAME_TRADES, callback=handle_new_trade
-    ).subscribe()
-    while True: await asyncio.sleep(1)
+# ────────────────────────────────────────────────────────────────────────────
 
 async def run_all_listeners():
     logger.info("🚀 STARTING POLYMARKET MONITORING SYSTEM (Multi-Trader Mode)")
