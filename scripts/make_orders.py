@@ -24,7 +24,7 @@ def _get_client() -> ClobClient:
                 config.CLOB_API_URL,
                 key=config.PRIVATE_KEY,
                 chain_id=config.POLY_CHAIN_ID,
-                signature_type=0,
+                signature_type=2,
                 funder=config.POLY_FUNDER,
             )
             # Derive and set API credentials
