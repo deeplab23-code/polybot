@@ -86,6 +86,28 @@ def _get_existing_hashes(hashes: list) -> set:
     return existing
 
 
+def get_new_activities(activities: list) -> list:
+    """
+    Devuelve solo las actividades que NO están en Supabase todavía.
+    No inserta nada — solo filtra. El insert lo hace insert_activities_batch.
+    """
+    if not activities:
+        return []
+    hashes = [a['transaction_hash'] for a in activities if a.get('transaction_hash')]
+    if not hashes:
+        return []
+    existing_hashes = _get_existing_hashes(hashes)
+    new_ones = [a for a in activities if a.get('transaction_hash') not in existing_hashes]
+    if new_ones:
+        # Insertar en Supabase para que no se reprocesen
+        for activity in new_ones:
+            try:
+                supabase.table(TABLE_NAME).insert(activity).execute()
+            except Exception as e:
+                print(f"Error inserting activity: {e}")
+    return new_ones
+
+
 def insert_activities_batch(activities: list):
     """
     Insert only genuinely new activities.
