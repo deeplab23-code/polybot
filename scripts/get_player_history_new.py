@@ -16,20 +16,13 @@ API_URL = "https://data-api.polymarket.com/activity"
 MAX_LIMIT = 500  # max limit of the api
 TABLE_NAME = config.TABLE_NAME_TRADES
 
+
 def transform_activity_to_db_format(activity: dict) -> dict:
     """
     Transforms API format to database format
-    
-    Args:
-        activity: Dictionary with API data
-    
-    Returns:
-        Dictionary formatted for database insertion
     """
-    # Converter timestamp para datetime
-    
     activity_datetime = datetime.fromtimestamp(activity['timestamp'])
-    
+
     return {
         'proxy_wallet': activity.get('proxyWallet'),
         'timestamp': activity.get('timestamp'),
@@ -55,6 +48,7 @@ def transform_activity_to_db_format(activity: dict) -> dict:
         'profile_image_optimized': activity.get('profileImageOptimized'),
     }
 
+
 def fetch_activities(user_address: str, limit: int = 500, offset: int = 0):
     """
     Fetch activities from the api
@@ -66,10 +60,8 @@ def fetch_activities(user_address: str, limit: int = 500, offset: int = 0):
         "sortBy": "TIMESTAMP",
         "sortDirection": "DESC",
     })
-
     data = resp.json()
     db_activities = [transform_activity_to_db_format(activity) for activity in data]
-    # print('db_activities', db_activities[0])
     print('===============================================')
     print('fetching activities from', user_address)
     print('db_activities length', len(db_activities))
@@ -79,30 +71,47 @@ def fetch_activities(user_address: str, limit: int = 500, offset: int = 0):
 
 def insert_activities_batch(activities: list):
     """
-    Insert activities into the database, skipping duplicates.
-    Uses upsert with unique_activity_key to avoid errors on re-polls.
+    Insert only genuinely new activities into the database.
+    Uses INSERT (not upsert) so Supabase Realtime fires correctly.
     """
     if not activities:
-        print("No activities to insert")
         return 0
 
-    success_count = 0
-    skip_count = 0
-    for activity in activities:
+    # Obtener hashes de las actividades a procesar
+    hashes = [a['transaction_hash'] for a in activities if a.get('transaction_hash')]
+    if not hashes:
+        return 0
+
+    # Verificar cuáles ya existen en Supabase
+    existing = supabase.table(TABLE_NAME)\
+        .select("transaction_hash")\
+        .in_("transaction_hash", hashes)\
+        .execute()
+
+    existing_hashes = {r['transaction_hash'] for r in existing.data}
+
+    # Solo las genuinamente nuevas
+    new_activities = [
+        a for a in activities
+        if a.get('transaction_hash') not in existing_hashes
+    ]
+
+    if not new_activities:
+        return 0
+
+    print(f"🆕 {len(new_activities)} new activities detected — inserting...")
+
+    inserted = 0
+    for activity in new_activities:
         try:
-            supabase.table(TABLE_NAME).upsert(
-                activity, on_conflict="unique_activity_key"
-            ).execute()
-            success_count += 1
+            supabase.table(TABLE_NAME).insert(activity).execute()
+            inserted += 1
         except Exception as e:
-            error_msg = str(e).lower()
-            if 'duplicate' in error_msg or 'unique' in error_msg or 'conflict' in error_msg:
-                skip_count += 1
-            else:
-                print(f"Error inserting activity: {e}")
-    if skip_count:
-        print(f"Skipped {skip_count} duplicate activities")
-    return success_count
+            print(f"Error inserting activity: {e}")
+
+    print(f"✅ Inserted {inserted} new activities")
+    return inserted
+
 
 if __name__ == "__main__":
     user_address = input("Enter the user address: ")
