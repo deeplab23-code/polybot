@@ -51,6 +51,8 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     # Ensure precision is handled (Polymarket prices are usually 2-4 decimal places, but we use the provided one)
     execution_price = min(round(execution_price, 4), 0.999)
     size = round(size, 2)
+    if size < 5:
+    size = 5.0
 
     logger.info(f"Preparing {side} order: {size} units at price ${execution_price} (Original: ${price}, Slippage: {max_slippage*100}%) for Token ID: {token_id}")
 
