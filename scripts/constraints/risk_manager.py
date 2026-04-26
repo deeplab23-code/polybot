@@ -5,8 +5,8 @@ config = get_config()
 
 # Thresholds for risk management
 # These could also be moved to config.py if we want them configurable via .env
-MAX_SINGLE_MARKET_EXPOSURE_PCT = 0.20  # Max 20% of bankroll in one market
-MAX_TRADER_EXPOSURE_PCT = 0.40        # Max 40% of bankroll on one trader's picks
+MAX_SINGLE_MARKET_EXPOSURE_PCT = 0.25  # Max 25% of bankroll in one market
+MAX_TRADER_EXPOSURE_PCT = 0.55        # Max 55% of bankroll on one trader's picks
 
 def check_risk_constraints(current_exposure: float, order_value: float, market_exposure: float = 0, trader_exposure: float = 0) -> bool:
     """
