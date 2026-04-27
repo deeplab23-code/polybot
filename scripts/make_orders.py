@@ -6,16 +6,10 @@ from config import get_config
 from logger import logger
 from notifier import send_notification
 
-# Load configuration
 config = get_config()
-
-# Initialize client singleton
 _client = None
 
 def _get_client() -> ClobClient:
-    """
-    Returns a singleton instance of the ClobClient, initializing it if necessary.
-    """
     global _client
     if _client is None:
         try:
@@ -36,8 +30,10 @@ def _get_client() -> ClobClient:
 
 def make_order(price: float, size: float, side: str, token_id: str, max_slippage: float = None) -> dict:
     """
-    Places an order on the Polymarket CLOB with retry logic and slippage protection.
-    Para precios > 0.95 usa slippage reducido (0.1%) para evitar superar el límite de 0.999.
+    Places an order on Polymarket CLOB.
+    - Precios > 0.95: slippage reducido al 0.1% para no superar 0.999
+    - Mínimo 5 tokens por orden (requisito Polymarket)
+    - Si cumplir el mínimo supera STAKE_MAX, skip
     """
     if max_slippage is None:
         max_slippage = config.DEFAULT_SLIPPAGE
@@ -45,17 +41,23 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     # Aplicar slippage según precio
     if side == BUY:
         if price > 0.95:
-            # Slippage reducido para precios altos — evita superar 0.999
             execution_price = min(round(price * 1.001, 4), 0.999)
         else:
             execution_price = min(round(price * (1 + max_slippage), 4), 0.999)
     else:
         execution_price = max(round(price * (1 - max_slippage), 4), 0.001)
 
-    # Mínimo de 5 tokens por orden (requisito de Polymarket)
     size = round(size, 2)
+
+    # Mínimo 5 tokens — pero verificar que no supere STAKE_MAX
     if size < 5:
-        size = 5.0
+        min_cost = 5.0 * execution_price
+        if min_cost <= config.STAKE_MAX:
+            size = 5.0
+            logger.info(f"📏 Adjusted to minimum 5 tokens (cost: ${min_cost:.2f})")
+        else:
+            logger.info(f"⏭️ Skipping: min order cost ${min_cost:.2f} exceeds STAKE_MAX ${config.STAKE_MAX}")
+            return None
 
     logger.info(f"Preparing {side} order: {size} units at price ${execution_price} (Original: ${price}, Slippage: {max_slippage*100}%) for Token ID: {token_id}")
 
@@ -67,14 +69,12 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     while attempts < config.MAX_RETRY_ATTEMPTS:
         try:
             client = _get_client()
-
             order_args = OrderArgs(
                 price=execution_price,
                 size=size,
                 side=side,
                 token_id=token_id,
             )
-
             signed_order = client.create_order(order_args)
             resp = client.post_order(signed_order, OrderType.GTC)
 
