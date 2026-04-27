@@ -26,6 +26,10 @@ _supabase_client: AsyncClient = None
 MAX_HOURS_TO_EXPIRY = 48
 MIN_PRICE = 0.10
 
+# Track open condition_ids to avoid doubling up on same market
+_open_condition_ids: set = set()
+_condition_ids_lock = threading.Lock()
+
 async def get_supabase() -> AsyncClient:
     global _supabase_client
     if _supabase_client is None:
@@ -54,6 +58,26 @@ def is_market_too_far(activity: dict, title: str) -> bool:
         pass
     return False
 
+def is_already_in_market(condition_id: str, title: str) -> bool:
+    """Devuelve True si ya tenemos una posición abierta en este mercado."""
+    if not condition_id:
+        return False
+    with _condition_ids_lock:
+        if condition_id in _open_condition_ids:
+            logger.info(f"⏭️  Skipping: already have position in market | {title}")
+            return True
+    return False
+
+def mark_market_open(condition_id: str) -> None:
+    if condition_id:
+        with _condition_ids_lock:
+            _open_condition_ids.add(condition_id)
+
+def mark_market_closed(condition_id: str) -> None:
+    if condition_id:
+        with _condition_ids_lock:
+            _open_condition_ids.discard(condition_id)
+
 def process_new_trade(activity: dict):
     try:
         proxy_wallet = (activity.get('proxy_wallet') or '').lower()
@@ -73,13 +97,17 @@ def process_new_trade(activity: dict):
             logger.info(f"⏭️  Skipping: invalid price {price}")
             return
 
-        # Filtro: precio mínimo 0.10 — evita trades que ganan centavos
+        # Filtro: precio mínimo 0.10
         if price < MIN_PRICE:
             logger.info(f"⏭️  Skipping: price {price:.3f} too low (min {MIN_PRICE})")
             return
 
-        # Filtro: no copiar mercados que cierran en más de 48 horas
+        # Filtro: mercado vencido o demasiado lejos
         if is_market_too_far(activity, title):
+            return
+
+        # Filtro: ya tenemos posición en este mercado
+        if side == BUY and is_already_in_market(condition_id, title):
             return
 
         if side == SELL:
@@ -95,6 +123,8 @@ def process_new_trade(activity: dict):
                         return
                     resp = make_order(price=price, size=final_size, side=side, token_id=token_id)
                     mark_trade(transaction_hash, "submitted" if resp and resp.get("success") else "failed", resp.get("orderID") if resp else None)
+                    if resp and resp.get("success"):
+                        mark_market_closed(condition_id)
         else:
             bot_usdc_size = sizing_constraints(usdc_size)
             if bot_usdc_size <= 0:
@@ -110,6 +140,7 @@ def process_new_trade(activity: dict):
                 mark_trade(transaction_hash, "submitted" if resp and resp.get("success") else "failed", resp.get("orderID") if resp else None)
                 if resp and resp.get("success"):
                     logger.info(f"✅ Order placed: {resp.get('orderID')}")
+                    mark_market_open(condition_id)
                 else:
                     logger.error(f"❌ Order failed: {resp}")
     except Exception as e:
