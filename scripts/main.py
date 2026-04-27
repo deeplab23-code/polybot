@@ -26,10 +26,6 @@ _supabase_client: AsyncClient = None
 MAX_HOURS_TO_EXPIRY = 48
 MIN_PRICE = 0.10
 
-# Track open condition_ids to avoid doubling up on same market
-_open_condition_ids: set = set()
-_condition_ids_lock = threading.Lock()
-
 async def get_supabase() -> AsyncClient:
     global _supabase_client
     if _supabase_client is None:
@@ -59,24 +55,29 @@ def is_market_too_far(activity: dict, title: str) -> bool:
     return False
 
 def is_already_in_market(condition_id: str, title: str) -> bool:
-    """Devuelve True si ya tenemos una posición abierta en este mercado."""
+    """Devuelve True si ya tenemos una posición abierta en este mercado (persiste en Supabase)."""
     if not condition_id:
         return False
-    with _condition_ids_lock:
-        if condition_id in _open_condition_ids:
+    try:
+        from copied_trades import supabase as ct_supabase, TABLE as CT_TABLE
+        resp = ct_supabase.table(CT_TABLE)\
+            .select("transaction_hash")\
+            .eq("condition_id", condition_id)\
+            .in_("status", ["claimed", "submitted"])\
+            .limit(1)\
+            .execute()
+        if resp.data:
             logger.info(f"⏭️  Skipping: already have position in market | {title}")
             return True
+    except Exception as e:
+        logger.warning(f"is_already_in_market check failed: {e}")
     return False
 
 def mark_market_open(condition_id: str) -> None:
-    if condition_id:
-        with _condition_ids_lock:
-            _open_condition_ids.add(condition_id)
+    pass  # Ya no necesario — Supabase es la fuente de verdad
 
 def mark_market_closed(condition_id: str) -> None:
-    if condition_id:
-        with _condition_ids_lock:
-            _open_condition_ids.discard(condition_id)
+    pass  # Ya no necesario — el status en Supabase lo refleja
 
 def process_new_trade(activity: dict):
     try:
