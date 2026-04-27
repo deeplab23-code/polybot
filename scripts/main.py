@@ -37,12 +37,16 @@ def is_target_trader(wallet: str) -> bool:
     return wallet.lower() in config.TRADER_WALLETS
 
 def is_market_too_far(activity: dict, title: str) -> bool:
+    """Devuelve True si el mercado ya venció O cierra en más de MAX_HOURS_TO_EXPIRY horas."""
     end_date = activity.get('end_date')
     if not end_date:
         return False
     try:
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         hours_left = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+        if hours_left < 0:
+            logger.info(f"⏭️  Skipping: market already expired | {title}")
+            return True
         if hours_left > MAX_HOURS_TO_EXPIRY:
             logger.info(f"⏭️  Skipping: market closes in {hours_left:.0f}h (max {MAX_HOURS_TO_EXPIRY}h) | {title}")
             return True
