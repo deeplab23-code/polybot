@@ -1,3 +1,38 @@
+import time
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import OrderArgs, OrderType
+from py_clob_client.order_builder.constants import BUY, SELL
+from config import get_config
+from logger import logger
+from notifier import send_notification
+
+config = get_config()
+_client = None
+
+
+def _get_client() -> ClobClient:
+    global _client
+    if _client is None:
+        try:
+            logger.info(
+                f"Initializing Polymarket CLOB Client "
+                f"(URL: {config.CLOB_API_URL}, Chain ID: {config.POLY_CHAIN_ID})"
+            )
+            _client = ClobClient(
+                config.CLOB_API_URL,
+                key=config.PRIVATE_KEY,
+                chain_id=config.POLY_CHAIN_ID,
+                signature_type=2,
+                funder=config.POLY_FUNDER,
+            )
+            _client.set_api_creds(_client.create_or_derive_api_creds())
+            logger.info("CLOB Client initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize CLOB Client: {e}")
+            raise
+    return _client
+
+
 def make_order(price: float, size: float, side: str, token_id: str, max_slippage: float = None) -> dict:
     """
     Places an order on Polymarket CLOB.
@@ -7,7 +42,6 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     - Respect Polymarket minimum:
         * minimum 5 tokens
         * minimum ~$1 notional
-    - Skip trades that cannot fit within bankroll rules
     """
 
     if max_slippage is None:
@@ -22,14 +56,11 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     else:
         execution_price = max(round(price * (1 - max_slippage), 4), 0.001)
 
-    # Polymarket practical minimums
     minimum_tokens = 5.0
     minimum_notional = 1.0
 
-    # Minimum valid cost required by exchange
     required_cost = max(minimum_notional, minimum_tokens * execution_price)
 
-    # Skip if minimum valid order exceeds allowed stake
     if required_cost > config.STAKE_MAX:
         logger.info(
             f"⏭️ Skipping trade: minimum valid order costs "
@@ -37,13 +68,8 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
         )
         return None
 
-    # Never exceed user stake
     max_affordable_size = config.STAKE_MAX / execution_price
 
-    # Final size respecting:
-    # - requested size
-    # - exchange minimum
-    # - stake limit
     size = max(size, minimum_tokens)
     size = min(size, max_affordable_size)
     size = round(size, 2)
