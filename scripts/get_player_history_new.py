@@ -19,7 +19,8 @@ _initialized_wallets: set = set()
 
 def transform_activity_to_db_format(activity: dict) -> dict:
     activity_datetime = datetime.fromtimestamp(activity['timestamp'])
-    return {
+    end_date = activity.get('endDate')
+    record = {
         'proxy_wallet': activity.get('proxyWallet'),
         'timestamp': activity.get('timestamp'),
         'activity_datetime': activity_datetime.isoformat(),
@@ -42,8 +43,10 @@ def transform_activity_to_db_format(activity: dict) -> dict:
         'bio': activity.get('bio'),
         'profile_image': activity.get('profileImage'),
         'profile_image_optimized': activity.get('profileImageOptimized'),
-        'end_date': activity.get('endDate'),
     }
+    # end_date solo en memoria para filtros, no se guarda en DB
+    record['end_date'] = end_date
+    return record
 
 
 def fetch_activities(user_address: str, limit: int = 500, offset: int = 0):
@@ -81,7 +84,8 @@ def _insert_as_seen(activities: list) -> None:
     """Inserta actividades en Supabase sin retornarlas para ejecución."""
     for activity in activities:
         try:
-            supabase.table(TABLE_NAME).insert(activity).execute()
+            db_row = {k: v for k, v in activity.items() if k != 'end_date'}
+            supabase.table(TABLE_NAME).insert(db_row).execute()
         except Exception as e:
             # duplicate key = ya existe, ignorar
             if "duplicate" not in str(e).lower() and "23505" not in str(e):
@@ -116,6 +120,16 @@ def get_new_activities(activities: list, wallet: str = None) -> list:
     # Wallet ya inicializada — estas son trades realmente nuevas
     _insert_as_seen(new_ones)
     return new_ones
+
+
+def _insert_db_safe(activities):
+    for activity in activities:
+        try:
+            db_row = {k: v for k, v in activity.items() if k != 'end_date'}
+            supabase.table(TABLE_NAME).insert(db_row).execute()
+        except Exception as e:
+            if "duplicate" not in str(e).lower() and "23505" not in str(e):
+                print(f"Error inserting activity: {e}")
 
 
 def insert_activities_batch(activities: list):
