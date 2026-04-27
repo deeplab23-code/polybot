@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import threading
 import time
 import traceback
@@ -23,6 +23,9 @@ key: str = config.SUPABASE_KEY
 TABLE_NAME_POSITIONS = config.TABLE_NAME_POSITIONS
 _supabase_client: AsyncClient = None
 
+# Máximo de horas hasta resolución del mercado para copiar la trade
+MAX_HOURS_TO_EXPIRY = 48
+
 async def get_supabase() -> AsyncClient:
     global _supabase_client
     if _supabase_client is None:
@@ -32,6 +35,21 @@ async def get_supabase() -> AsyncClient:
 def is_target_trader(wallet: str) -> bool:
     if not wallet: return False
     return wallet.lower() in config.TRADER_WALLETS
+
+def is_market_too_far(activity: dict, title: str) -> bool:
+    """Devuelve True si el mercado cierra en más de MAX_HOURS_TO_EXPIRY horas."""
+    end_date = activity.get('end_date')
+    if not end_date:
+        return False
+    try:
+        end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        hours_left = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+        if hours_left > MAX_HOURS_TO_EXPIRY:
+            logger.info(f"⏭️  Skipping: market closes in {hours_left:.0f}h (max {MAX_HOURS_TO_EXPIRY}h) | {title}")
+            return True
+    except Exception:
+        pass
+    return False
 
 def process_new_trade(activity: dict):
     try:
@@ -45,10 +63,17 @@ def process_new_trade(activity: dict):
         title = activity.get('title', 'N/A')
         price = float(activity.get('price') or 0)
         condition_id = activity.get('condition_id')
+
         logger.info(f"🎯 New trade from {proxy_wallet[:10]}... | {title} | {side} | ${usdc_size:.2f}")
+
         if price <= 0:
             logger.info(f"⏭️  Skipping: invalid price {price}")
             return
+
+        # Filtro: no copiar mercados que cierran en más de 48 horas
+        if is_market_too_far(activity, title):
+            return
+
         if side == SELL:
             data_trader = fetch_player_positions(user_address=proxy_wallet, condition_id=condition_id)
             data_myself = fetch_player_positions(user_address=config.POLY_FUNDER, condition_id=condition_id)
