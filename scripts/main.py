@@ -230,7 +230,7 @@ def _start_polling_threads():
                 try:
                     activities = fetch_history_activities(wallet, limit=500, offset=0)
                     if not activities: continue
-                    new_activities = get_new_activities(activities)
+                    new_activities = get_new_activities(activities, wallet=wallet)
                     if new_activities:
                         logger.info(f"🆕 {len(new_activities)} new from {wallet[:10]}...")
                         for activity in new_activities:
