@@ -23,8 +23,8 @@ key: str = config.SUPABASE_KEY
 TABLE_NAME_POSITIONS = config.TABLE_NAME_POSITIONS
 _supabase_client: AsyncClient = None
 
-# Máximo de horas hasta resolución del mercado para copiar la trade
 MAX_HOURS_TO_EXPIRY = 48
+MIN_PRICE = 0.10
 
 async def get_supabase() -> AsyncClient:
     global _supabase_client
@@ -37,7 +37,6 @@ def is_target_trader(wallet: str) -> bool:
     return wallet.lower() in config.TRADER_WALLETS
 
 def is_market_too_far(activity: dict, title: str) -> bool:
-    """Devuelve True si el mercado cierra en más de MAX_HOURS_TO_EXPIRY horas."""
     end_date = activity.get('end_date')
     if not end_date:
         return False
@@ -68,6 +67,11 @@ def process_new_trade(activity: dict):
 
         if price <= 0:
             logger.info(f"⏭️  Skipping: invalid price {price}")
+            return
+
+        # Filtro: precio mínimo 0.10 — evita trades que ganan centavos
+        if price < MIN_PRICE:
+            logger.info(f"⏭️  Skipping: price {price:.3f} too low (min {MIN_PRICE})")
             return
 
         # Filtro: no copiar mercados que cierran en más de 48 horas
