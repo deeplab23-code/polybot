@@ -28,8 +28,24 @@ def claim_trade(
 ) -> bool:
     """
     Atomically claim a source-trade for copying. Returns True if this process
-    now owns the copy, False if another invocation already claimed it (replay).
+    now owns the copy, False if another invocation already claimed it (replay)
+    or if we already have an active position in this market (condition_id).
     """
+    # Check de condition_id ANTES de insertar — evita duplicados en el mismo mercado
+    if condition_id:
+        try:
+            resp = supabase.table(TABLE)\
+                .select("transaction_hash")\
+                .eq("condition_id", condition_id)\
+                .in_("status", ["claimed", "submitted"])\
+                .limit(1)\
+                .execute()
+            if resp.data:
+                logger.info(f"⏭️  Skipping: already have active position in market (condition_id: {condition_id[:12]}...)")
+                return False
+        except Exception as e:
+            logger.warning(f"condition_id check failed: {e}")
+
     row = {
         "transaction_hash": transaction_hash,
         "source_wallet": source_wallet.lower(),
