@@ -42,6 +42,13 @@ def is_market_too_far(activity: dict, title: str) -> bool:
     """Devuelve True si el mercado ya venció O cierra en más de MAX_HOURS_TO_EXPIRY horas."""
     end_date = activity.get('end_date')
     if not end_date:
+        # Sin end_date, usar timestamp de la trade — si es muy vieja, skip
+        timestamp = activity.get('timestamp')
+        if timestamp:
+            hours_since = (datetime.now(timezone.utc).timestamp() - float(timestamp)) / 3600
+            if hours_since > MAX_HOURS_TO_EXPIRY:
+                logger.info(f"⏭️  Skipping: trade is {hours_since:.0f}h old (max {MAX_HOURS_TO_EXPIRY}h) | {title}")
+                return True
         return False
     try:
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
