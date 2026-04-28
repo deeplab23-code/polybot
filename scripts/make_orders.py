@@ -12,8 +12,6 @@ def _get_client() -> ClobClient:
     if _client is None:
         try:
             logger.info(f"Initializing Polymarket CLOB v2 Client (URL: {config.CLOB_API_URL}, Chain ID: {config.POLY_CHAIN_ID})")
-            
-            # Step 1: crear cliente temporal solo para obtener creds
             temp_client = ClobClient(
                 host=config.CLOB_API_URL,
                 chain_id=config.POLY_CHAIN_ID,
@@ -22,8 +20,6 @@ def _get_client() -> ClobClient:
                 signature_type=2,
             )
             creds = temp_client.create_or_derive_api_key()
-            
-            # Step 2: cliente autenticado completo
             _client = ClobClient(
                 host=config.CLOB_API_URL,
                 chain_id=config.POLY_CHAIN_ID,
@@ -98,9 +94,14 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
                 logger.warning(f"⚠️ Order placement returned empty response")
 
         except Exception as e:
+            error_str = str(e).lower()
+            # Si no hay saldo, no reintentar — skipear limpio
+            if "not enough balance" in error_str or "balance is not enough" in error_str:
+                logger.info(f"⏭️ Skipping: insufficient balance for ${estimated_cost:.2f} order")
+                return None
             logger.error(f"❌ Attempt {attempts + 1} failed with error: {e}")
             global _client
-            _client = None  # Reset para reintentar con creds nuevas
+            _client = None
 
         attempts += 1
         if attempts < config.MAX_RETRY_ATTEMPTS:
