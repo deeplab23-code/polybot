@@ -13,7 +13,9 @@ from get_player_history_new import (
 from constraints.sizing import sizing_constraints
 from constraints.risk_manager import check_risk_constraints
 from copied_trades import claim_trade, mark_trade, trader_exposure
-from py_clob_client.order_builder.constants import BUY, SELL
+from py_clob_client_v2 import Side
+BUY = Side.BUY
+SELL = Side.SELL
 from config import get_config
 from logger import logger
 
