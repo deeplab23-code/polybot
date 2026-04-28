@@ -52,7 +52,7 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     max_cost = config.STAKE_MAX
 
     # Sizing fijo: ignoramos el size del trader, usamos siempre budget fijo
-    target_cost = max_cost * 0.9  # 90% del max para evitar edge cases
+    target_cost = max_cost
     size = int(target_cost / execution_price)
 
     # Si no podemos pagar el mínimo, skip
