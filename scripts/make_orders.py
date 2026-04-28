@@ -40,12 +40,12 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
 
     if side == "BUY" or str(side) == str(Side.BUY):
         if price > 0.95:
-            execution_price = min(round(price * 1.001, 4), 0.999)
+            execution_price = min(round(price * 1.001, 2), 0.99)
         else:
-            execution_price = min(round(price * (1 + max_slippage), 4), 0.999)
+            execution_price = min(round(price * (1 + max_slippage), 2), 0.99)
         clob_side = Side.BUY
     else:
-        execution_price = max(round(price * (1 - max_slippage), 4), 0.001)
+        execution_price = max(round(price * (1 - max_slippage), 2), 0.01)
         clob_side = Side.SELL
 
     minimum_tokens = 5.0
