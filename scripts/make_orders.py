@@ -2,6 +2,7 @@ import time
 from py_clob_client_v2 import (
     ClobClient,
     OrderArgs,
+    MarketOrderArgs,
     OrderType,
     Side,
     PartialCreateOrderOptions,
@@ -64,25 +65,7 @@ def make_order(
     if max_slippage is None:
         max_slippage = config.DEFAULT_SLIPPAGE
 
-    if side == "BUY" or str(side) == str(Side.BUY):
-        if price > 0.95:
-            execution_price = min(round(price * 1.001, 4), 0.999)
-        else:
-            execution_price = min(round(price * (1 + max_slippage), 4), 0.999)
-
-        clob_side = Side.BUY
-
-    else:
-        execution_price = max(round(price * (1 - max_slippage), 4), 0.001)
-        clob_side = Side.SELL
-
-    # ---------------------------------------------------------
-    # IMPORTANT V2 FIX:
-    # incoming size = copied trader shares
-    # convert to original USD value first
-    # then clamp between STAKE_MIN and STAKE_MAX
-    # then convert back into shares at execution price
-    # ---------------------------------------------------------
+    is_buy = side == "BUY" or str(side) == str(Side.BUY)
 
     original_usd_value = size * price
 
@@ -91,29 +74,23 @@ def make_order(
         config.STAKE_MAX
     )
 
-    adjusted_size = round(usd_to_spend / execution_price, 2)
-    estimated_cost = round(adjusted_size * execution_price, 2)
-
-    if estimated_cost < config.STAKE_MIN:
+    if usd_to_spend < config.STAKE_MIN:
         logger.info(
-            f"⏭️ Skipping: estimated cost ${estimated_cost:.2f} "
-            f"is below STAKE_MIN ${config.STAKE_MIN}"
+            f"⏭️ Skipping: ${usd_to_spend:.2f} < STAKE_MIN ${config.STAKE_MIN}"
         )
         return None
 
     logger.info(
         f"Preparing {side} order | "
-        f"Original trader value: ${original_usd_value:.2f} | "
-        f"Bot spend: ${estimated_cost:.2f} | "
-        f"Shares: {adjusted_size} | "
-        f"Price: ${execution_price} | "
-        f"Token: {token_id}"
+        f"Trader value ${original_usd_value:.2f} -> "
+        f"Bot spend ${usd_to_spend:.2f}"
     )
 
     if config.DRY_RUN:
         logger.info(
-            f"🛡️ DRY RUN: {side} {adjusted_size} shares "
-            f"for ${estimated_cost:.2f}"
+            f"🛡️ DRY RUN | {side} | "
+            f"Spend ${usd_to_spend:.2f} | "
+            f"Token {token_id[:12]}..."
         )
 
         return {
@@ -128,18 +105,38 @@ def make_order(
         try:
             client = _get_client()
 
-            response = client.create_and_post_order(
-                order_args=OrderArgs(
-                    token_id=token_id,
-                    price=execution_price,
-                    side=clob_side,
-                    size=adjusted_size,
-                ),
-                options=PartialCreateOrderOptions(
-                    tick_size="0.01"
-                ),
-                order_type=OrderType.GTC,
-            )
+            # ==========================
+            # BUY = exact pUSD amount
+            # ==========================
+            if is_buy:
+                response = client.create_and_post_order(
+                    order_args=MarketOrderArgs(
+                        token_id=token_id,
+                        amount=round(usd_to_spend, 2),
+                        side=Side.BUY,
+                    )
+                )
+
+            # ==========================
+            # SELL = shares
+            # ==========================
+            else:
+                adjusted_size = round(size, 2)
+
+                response = client.create_and_post_order(
+                    order_args=OrderArgs(
+                        token_id=token_id,
+                        price=price,
+                        side=Side.SELL,
+                        size=adjusted_size,
+                    ),
+                    options=PartialCreateOrderOptions(
+                        tick_size="0.01"
+                    ),
+                    order_type=OrderType.GTC,
+                )
+
+            logger.info(f"RAW ORDER RESPONSE: {response}")
 
             if response:
                 order_id = (
@@ -154,11 +151,9 @@ def make_order(
                 )
 
                 send_notification(
-                    f"✅ *Order Placed!*\n\n"
+                    f"✅ *Order Placed*\n\n"
                     f"Type: {side}\n"
-                    f"Spend: ${estimated_cost:.2f}\n"
-                    f"Shares: {adjusted_size}\n"
-                    f"Price: ${execution_price}\n"
+                    f"Spend: ${usd_to_spend:.2f}\n"
                     f"Token: `{token_id[:16]}...`"
                 )
 
@@ -167,7 +162,7 @@ def make_order(
                     "orderID": order_id,
                 }
 
-            logger.warning("⚠️ Empty response from order API")
+            logger.warning("⚠️ Empty response from API")
 
         except Exception as e:
             error_str = str(e).lower()
@@ -178,7 +173,7 @@ def make_order(
             ):
                 logger.info(
                     f"⏭️ Skipping: insufficient balance "
-                    f"for ${estimated_cost:.2f} order"
+                    f"for ${usd_to_spend:.2f}"
                 )
                 return None
 
@@ -193,21 +188,18 @@ def make_order(
 
         if attempts < config.MAX_RETRY_ATTEMPTS:
             wait_time = config.RETRY_BACKOFF_FACTOR ** attempts
-
             logger.info(
-                f"🔄 Retrying in {wait_time:.2f} seconds..."
+                f"🔄 Retrying in {wait_time:.2f}s..."
             )
-
             time.sleep(wait_time)
 
     logger.critical(
-        f"🛑 Failed after {config.MAX_RETRY_ATTEMPTS} attempts."
+        f"🛑 Failed after {config.MAX_RETRY_ATTEMPTS} attempts"
     )
 
     send_notification(
-        f"🛑 *CRITICAL ERROR*\n\n"
-        f"Failed to place {side} order.\n"
-        f"Spend attempted: ${estimated_cost:.2f}"
+        f"🛑 *Order Failed*\n\n"
+        f"{side} ${usd_to_spend:.2f}"
     )
 
     return None
