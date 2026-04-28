@@ -88,7 +88,7 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
                     size=size,
                 ),
                 options=PartialCreateOrderOptions(tick_size="0.01"),
-                order_type=OrderType.GTC,
+                order_type=OrderType.FOK,
             )
 
             if resp:
