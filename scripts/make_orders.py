@@ -1,13 +1,5 @@
 import time
-from py_clob_client_v2 import (
-    ClobClient,
-    OrderArgs,
-    MarketOrderArgs,
-    OrderType,
-    Side,
-    PartialCreateOrderOptions,
-)
-
+from py_clob_client_v2 import ClobClient, OrderArgs, OrderType, Side, PartialCreateOrderOptions
 from config import get_config
 from logger import logger
 from notifier import send_notification
@@ -15,191 +7,107 @@ from notifier import send_notification
 config = get_config()
 _client = None
 
-
 def _get_client() -> ClobClient:
     global _client
-
     if _client is None:
         try:
-            logger.info(
-                f"Initializing Polymarket CLOB v2 Client "
-                f"(URL: {config.CLOB_API_URL}, Chain ID: {config.POLY_CHAIN_ID})"
-            )
-
+            logger.info(f"Initializing Polymarket CLOB v2 Client (URL: {config.CLOB_API_URL}, Chain ID: {config.POLY_CHAIN_ID})")
+            # v2: sin funder ni signature_type para obtener creds
             temp_client = ClobClient(
                 host=config.CLOB_API_URL,
                 chain_id=config.POLY_CHAIN_ID,
                 key=config.PRIVATE_KEY,
-                funder=config.POLY_FUNDER,
-                signature_type=2,
             )
-
             creds = temp_client.create_or_derive_api_key()
-
+            # Cliente autenticado con funder solo en el segundo paso
             _client = ClobClient(
                 host=config.CLOB_API_URL,
                 chain_id=config.POLY_CHAIN_ID,
                 key=config.PRIVATE_KEY,
+                creds=creds,
                 funder=config.POLY_FUNDER,
                 signature_type=2,
-                creds=creds,
             )
-
             logger.info("CLOB v2 Client initialized successfully.")
-
         except Exception as e:
-            logger.error(f"Failed to initialize CLOB client: {e}")
+            logger.error(f"Failed to initialize CLOB v2 Client: {e}")
             raise
-
     return _client
 
-
-def make_order(
-    price: float,
-    size: float,
-    side: str,
-    token_id: str,
-    max_slippage: float = None,
-) -> dict:
-
+def make_order(price: float, size: float, side: str, token_id: str, max_slippage: float = None) -> dict:
     if max_slippage is None:
         max_slippage = config.DEFAULT_SLIPPAGE
 
-    is_buy = side == "BUY" or str(side) == str(Side.BUY)
+    if side == "BUY" or str(side) == str(Side.BUY):
+        if price > 0.95:
+            execution_price = min(round(price * 1.001, 4), 0.999)
+        else:
+            execution_price = min(round(price * (1 + max_slippage), 4), 0.999)
+        clob_side = Side.BUY
+    else:
+        execution_price = max(round(price * (1 - max_slippage), 4), 0.001)
+        clob_side = Side.SELL
 
-    original_usd_value = size * price
+    minimum_tokens = 5.0
+    minimum_notional = 1.0
+    required_cost = max(minimum_notional, minimum_tokens * execution_price)
 
-    usd_to_spend = min(
-        max(original_usd_value, config.STAKE_MIN),
-        config.STAKE_MAX
-    )
-
-    if usd_to_spend < config.STAKE_MIN:
-        logger.info(
-            f"⏭️ Skipping: ${usd_to_spend:.2f} < STAKE_MIN ${config.STAKE_MIN}"
-        )
+    if required_cost > config.STAKE_MAX:
+        logger.info(f"⏭️ Skipping: min order cost ${required_cost:.2f} exceeds STAKE_MAX ${config.STAKE_MAX}")
         return None
 
-    logger.info(
-        f"Preparing {side} order | "
-        f"Trader value ${original_usd_value:.2f} -> "
-        f"Bot spend ${usd_to_spend:.2f}"
-    )
+    max_affordable_size = config.STAKE_MAX / execution_price
+    size = max(size, minimum_tokens)
+    size = min(size, max_affordable_size)
+    size = round(size, 2)
+    estimated_cost = size * execution_price
+
+    logger.info(f"Preparing {side} order: {size} units at price ${execution_price} (Estimated cost: ${estimated_cost:.2f}) for Token ID: {token_id}")
 
     if config.DRY_RUN:
-        logger.info(
-            f"🛡️ DRY RUN | {side} | "
-            f"Spend ${usd_to_spend:.2f} | "
-            f"Token {token_id[:12]}..."
-        )
-
-        return {
-            "success": True,
-            "dry_run": True,
-            "orderID": "DRY_RUN_ID",
-        }
+        logger.info(f"🛡️ DRY RUN: Skipping order for {side} {size} units.")
+        return {"success": True, "dry_run": True, "orderID": "DRY_RUN_ID"}
 
     attempts = 0
-
     while attempts < config.MAX_RETRY_ATTEMPTS:
         try:
             client = _get_client()
+            resp = client.create_and_post_order(
+                order_args=OrderArgs(
+                    token_id=token_id,
+                    price=execution_price,
+                    side=clob_side,
+                    size=size,
+                ),
+                options=PartialCreateOrderOptions(tick_size="0.01"),
+                order_type=OrderType.GTC,
+            )
 
-            # ==========================
-            # BUY = exact pUSD amount
-            # ==========================
-            if is_buy:
-                response = client.create_and_post_order(
-                    order_args=MarketOrderArgs(
-                        token_id=token_id,
-                        amount=round(usd_to_spend, 2),
-                        side=Side.BUY,
-                    )
-                )
-
-            # ==========================
-            # SELL = shares
-            # ==========================
-            else:
-                adjusted_size = round(size, 2)
-
-                response = client.create_and_post_order(
-                    order_args=OrderArgs(
-                        token_id=token_id,
-                        price=price,
-                        side=Side.SELL,
-                        size=adjusted_size,
-                    ),
-                    options=PartialCreateOrderOptions(
-                        tick_size="0.01"
-                    ),
-                    order_type=OrderType.GTC,
-                )
-
-            logger.info(f"RAW ORDER RESPONSE: {response}")
-
-            if response:
-                order_id = (
-                    response.get("orderID")
-                    or response.get("id")
-                    or str(response)
-                )
-
-                logger.info(
-                    f"✅ Order placed successfully! "
-                    f"Order ID: {order_id}"
-                )
-
+            if resp:
+                order_id = resp.get("orderID") or resp.get("id") or str(resp)
+                logger.info(f"✅ Order placed successfully! Order ID: {order_id}")
                 send_notification(
-                    f"✅ *Order Placed*\n\n"
-                    f"Type: {side}\n"
-                    f"Spend: ${usd_to_spend:.2f}\n"
-                    f"Token: `{token_id[:16]}...`"
+                    f"✅ *Order Placed!*\n\nType: {side}\nSize: {size}\nPrice: ${execution_price}\nCost: ${estimated_cost:.2f}\nToken: `{token_id[:16]}...`"
                 )
-
-                return {
-                    "success": True,
-                    "orderID": order_id,
-                }
-
-            logger.warning("⚠️ Empty response from API")
+                return {"success": True, "orderID": order_id}
+            else:
+                logger.warning(f"⚠️ Order placement returned empty response")
 
         except Exception as e:
             error_str = str(e).lower()
-
-            if (
-                "not enough balance" in error_str
-                or "balance is not enough" in error_str
-            ):
-                logger.info(
-                    f"⏭️ Skipping: insufficient balance "
-                    f"for ${usd_to_spend:.2f}"
-                )
+            if "not enough balance" in error_str or "balance is not enough" in error_str:
+                logger.info(f"⏭️ Skipping: insufficient balance for ${estimated_cost:.2f} order")
                 return None
-
-            logger.error(
-                f"❌ Attempt {attempts + 1} failed: {e}"
-            )
-
+            logger.error(f"❌ Attempt {attempts + 1} failed with error: {e}")
             global _client
             _client = None
 
         attempts += 1
-
         if attempts < config.MAX_RETRY_ATTEMPTS:
             wait_time = config.RETRY_BACKOFF_FACTOR ** attempts
-            logger.info(
-                f"🔄 Retrying in {wait_time:.2f}s..."
-            )
+            logger.info(f"🔄 Retrying in {wait_time:.2f} seconds...")
             time.sleep(wait_time)
 
-    logger.critical(
-        f"🛑 Failed after {config.MAX_RETRY_ATTEMPTS} attempts"
-    )
-
-    send_notification(
-        f"🛑 *Order Failed*\n\n"
-        f"{side} ${usd_to_spend:.2f}"
-    )
-
+    logger.critical(f"🛑 Failed to place order after {config.MAX_RETRY_ATTEMPTS} attempts.")
+    send_notification(f"🛑 *CRITICAL ERROR: Order Failed!*\n\nFailed to place {side} order for {size} units.")
     return None
