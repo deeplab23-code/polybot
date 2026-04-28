@@ -59,7 +59,7 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     max_affordable_size = config.STAKE_MAX / execution_price
     size = max(size, minimum_tokens)
     size = min(size, max_affordable_size)
-    size = round(size, 2)
+    size = round(size, 1)
     estimated_cost = size * execution_price
 
     logger.info(f"Preparing {side} order: {size} units at price ${execution_price} (Estimated cost: ${estimated_cost:.2f}) for Token ID: {token_id}")
