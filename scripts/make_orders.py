@@ -12,20 +12,25 @@ def _get_client() -> ClobClient:
     if _client is None:
         try:
             logger.info(f"Initializing Polymarket CLOB v2 Client (URL: {config.CLOB_API_URL}, Chain ID: {config.POLY_CHAIN_ID})")
-            # Step 1: create client with just key to get creds
+            
+            # Step 1: crear cliente temporal solo para obtener creds
             temp_client = ClobClient(
                 host=config.CLOB_API_URL,
                 chain_id=config.POLY_CHAIN_ID,
                 key=config.PRIVATE_KEY,
+                funder=config.POLY_FUNDER,
+                signature_type=2,
             )
             creds = temp_client.create_or_derive_api_key()
-            # Step 2: full authenticated client
+            
+            # Step 2: cliente autenticado completo
             _client = ClobClient(
                 host=config.CLOB_API_URL,
                 chain_id=config.POLY_CHAIN_ID,
                 key=config.PRIVATE_KEY,
-                creds=creds,
                 funder=config.POLY_FUNDER,
+                signature_type=2,
+                creds=creds,
             )
             logger.info("CLOB v2 Client initialized successfully.")
         except Exception as e:
@@ -34,17 +39,10 @@ def _get_client() -> ClobClient:
     return _client
 
 def make_order(price: float, size: float, side: str, token_id: str, max_slippage: float = None) -> dict:
-    """
-    Places an order on Polymarket CLOB v2.
-    - Precios > 0.95: slippage reducido al 0.1%
-    - Mínimo 5 tokens por orden
-    - Si cumplir el mínimo supera STAKE_MAX, skip
-    """
     if max_slippage is None:
         max_slippage = config.DEFAULT_SLIPPAGE
 
-    # Aplicar slippage según precio
-    if side == "BUY":
+    if side == "BUY" or str(side) == str(Side.BUY):
         if price > 0.95:
             execution_price = min(round(price * 1.001, 4), 0.999)
         else:
@@ -78,7 +76,6 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     while attempts < config.MAX_RETRY_ATTEMPTS:
         try:
             client = _get_client()
-
             resp = client.create_and_post_order(
                 order_args=OrderArgs(
                     token_id=token_id,
@@ -102,10 +99,8 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
 
         except Exception as e:
             logger.error(f"❌ Attempt {attempts + 1} failed with error: {e}")
-            # Reset client on auth errors
-            if "version" in str(e).lower() or "auth" in str(e).lower() or "401" in str(e):
-                global _client
-                _client = None
+            global _client
+            _client = None  # Reset para reintentar con creds nuevas
 
         attempts += 1
         if attempts < config.MAX_RETRY_ATTEMPTS:
@@ -116,9 +111,3 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     logger.critical(f"🛑 Failed to place order after {config.MAX_RETRY_ATTEMPTS} attempts.")
     send_notification(f"🛑 *CRITICAL ERROR: Order Failed!*\n\nFailed to place {side} order for {size} units.")
     return None
-
-if __name__ == "__main__":
-    try:
-        make_order(price=0.5, size=5.0, side="BUY", token_id='27745789011483877770092220164639878505910623464021791529418856008078952259643')
-    except Exception as e:
-        print(f"Test run caught error: {e}")
