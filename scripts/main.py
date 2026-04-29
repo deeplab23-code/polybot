@@ -308,7 +308,7 @@ def stop_loss_loop():
         except Exception as e:
             logger.error(f"❌ Stop loss loop error: {e}\n{traceback.format_exc()}")
 
-        time.sleep(60 * 5)
+        time.sleep(60)
 
 def _start_polling_threads():
     def poll_history_loop():
