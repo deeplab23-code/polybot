@@ -241,6 +241,52 @@ async def run_all_listeners():
     logger.info("🚀 STARTING POLYMARKET MONITORING SYSTEM (Multi-Trader Mode)")
     await asyncio.gather(listen_to_positions(), listen_to_updates())
 
+STOP_LOSS_PCT = 0.50  # Cerrar si pierde más del 50% del valor inicial
+
+def stop_loss_loop():
+    """Revisa posiciones propias cada 5 minutos y cierra las que pierden más del STOP_LOSS_PCT."""
+    while True:
+        try:
+            positions = fetch_player_positions(user_address=config.POLY_FUNDER, limit=500, offset=0)
+            if not positions:
+                time.sleep(60 * 5)
+                continue
+
+            for pos in positions:
+                try:
+                    initial_value = float(pos.get('initialValue') or 0)
+                    current_value = float(pos.get('currentValue') or 0)
+                    cur_price = float(pos.get('curPrice') or 0)
+                    size = float(pos.get('size') or 0)
+                    token_id = pos.get('asset')
+                    title = pos.get('title', 'N/A')
+
+                    if initial_value <= 0 or cur_price <= 0 or size <= 0:
+                        continue
+
+                    loss_pct = (initial_value - current_value) / initial_value
+
+                    if loss_pct >= STOP_LOSS_PCT:
+                        logger.info(f"🛑 Stop loss triggered: {title} | Lost {loss_pct*100:.1f}% | Value: ${current_value:.2f} (was ${initial_value:.2f})")
+                        resp = make_order(
+                            price=cur_price,
+                            size=size,
+                            side=SELL,
+                            token_id=token_id,
+                        )
+                        if resp and resp.get('success'):
+                            logger.info(f"✅ Stop loss executed: {title} | Recovered ~${current_value:.2f}")
+                        else:
+                            logger.warning(f"⚠️ Stop loss failed: {title}")
+
+                except Exception as e:
+                    logger.error(f"❌ Error in stop loss check for position: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Stop loss loop error: {e}\n{traceback.format_exc()}")
+
+        time.sleep(60 * 5)
+
 def _start_polling_threads():
     def poll_history_loop():
         while True:
@@ -269,6 +315,7 @@ def _start_polling_threads():
 
     threading.Thread(target=poll_history_loop, daemon=True).start()
     threading.Thread(target=poll_positions_loop, daemon=True).start()
+    threading.Thread(target=stop_loss_loop, daemon=True).start()
 
 if __name__ == "__main__":
     config.print_config_summary()
