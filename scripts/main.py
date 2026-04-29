@@ -45,6 +45,14 @@ def is_market_too_far(activity: dict, title: str) -> bool:
     if not end_date:
         if "Up or Down" in title:
             return False  # Mercados 15M — siempre corto plazo, permitir
+        # Permitir mercados con fecha de hoy en el título
+        today = datetime.now(timezone.utc)
+        today_strs = [
+            today.strftime("%B %-d"),  # "April 29"
+            today.strftime("%b %-d"),  # "Apr 29"
+        ]
+        if any(s in title for s in today_strs):
+            return False
         logger.info(f"⏭️  Skipping: no end_date (cannot verify expiry) | {title}")
         return True
 
