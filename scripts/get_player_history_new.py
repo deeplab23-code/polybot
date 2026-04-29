@@ -94,8 +94,9 @@ def _insert_as_seen(activities: list) -> None:
 
 def get_new_activities(activities: list, wallet: str = None) -> list:
     """
-    Primera vez que se llama para una wallet: inserta todo como "visto" y retorna vacío.
-    Siguientes veces: retorna solo las realmente nuevas para ejecutar.
+    Primera vez real (sin historial en DB): inserta todo como "visto" y retorna vacío.
+    Redeploys (ya tiene historial en DB): retorna trades nuevas normalmente.
+    Siguientes llamadas: retorna solo las realmente nuevas para ejecutar.
     """
     if not activities:
         return []
@@ -110,12 +111,25 @@ def get_new_activities(activities: list, wallet: str = None) -> list:
     if not new_ones:
         return []
 
-    # Si esta wallet no fue inicializada todavía, marcar todo como visto sin ejecutar
+    # Si esta wallet no fue inicializada todavía, verificar si ya tiene historial en DB
     if wallet and wallet not in _initialized_wallets:
-        print(f"🔄 Warm-up for {wallet[:10]}... — marking {len(new_ones)} historical trades as seen (not executing)")
-        _insert_as_seen(new_ones)
-        _initialized_wallets.add(wallet)
-        return []
+        result = supabase.table(TABLE_NAME)\
+            .select("transaction_hash")\
+            .eq("proxy_wallet", wallet)\
+            .limit(1)\
+            .execute()
+
+        if result.data:
+            # Ya tiene historial en DB — es un redeploy, no hacer warm-up
+            _initialized_wallets.add(wallet)
+            _insert_as_seen(new_ones)
+            return new_ones
+        else:
+            # Primera vez real — hacer warm-up
+            print(f"🔄 Warm-up for {wallet[:10]}... — marking {len(new_ones)} historical trades as seen (not executing)")
+            _insert_as_seen(new_ones)
+            _initialized_wallets.add(wallet)
+            return []
 
     # Wallet ya inicializada — estas son trades realmente nuevas
     _insert_as_seen(new_ones)
