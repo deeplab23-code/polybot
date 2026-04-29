@@ -334,6 +334,7 @@ def _start_polling_threads():
                         logger.info(f"🆕 {len(new_activities)} new from {wallet[:10]}...")
                         for activity in new_activities:
                             process_new_trade(activity)
+                            time.sleep(0.1)  # 100ms entre trades para evitar race conditions
                 except Exception:
                     logger.error(f"Error polling history for {wallet}: {traceback.format_exc()}")
             time.sleep(10)
