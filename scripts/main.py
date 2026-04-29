@@ -41,15 +41,11 @@ def is_target_trader(wallet: str) -> bool:
 def is_market_too_far(activity: dict, title: str) -> bool:
     """Devuelve True si el mercado ya venció O cierra en más de MAX_HOURS_TO_EXPIRY horas."""
     end_date = activity.get('end_date')
+
     if not end_date:
-        # Sin end_date, usar timestamp de la trade — si es muy vieja, skip
-        timestamp = activity.get('timestamp')
-        if timestamp:
-            hours_since = (datetime.now(timezone.utc).timestamp() - float(timestamp)) / 3600
-            if hours_since > MAX_HOURS_TO_EXPIRY:
-                logger.info(f"⏭️  Skipping: trade is {hours_since:.0f}h old (max {MAX_HOURS_TO_EXPIRY}h) | {title}")
-                return True
-        return False
+        logger.info(f"⏭️  Skipping: no end_date (cannot verify expiry) | {title}")
+        return True
+
     try:
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         hours_left = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600
@@ -59,8 +55,10 @@ def is_market_too_far(activity: dict, title: str) -> bool:
         if hours_left > MAX_HOURS_TO_EXPIRY:
             logger.info(f"⏭️  Skipping: market closes in {hours_left:.0f}h (max {MAX_HOURS_TO_EXPIRY}h) | {title}")
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"⏭️  Skipping: end_date parse failed | {title} | {e}")
+        return True
+
     return False
 
 def is_already_in_market(condition_id: str, title: str) -> bool:
