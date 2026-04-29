@@ -27,7 +27,7 @@ _supabase_client: AsyncClient = None
 
 MAX_HOURS_TO_EXPIRY = 48
 MIN_PRICE = 0.10
-MIN_REWARD_RISK_RATIO = 1.5
+MIN_REWARD_RISK_RATIO = 1.0
 
 async def get_supabase() -> AsyncClient:
     global _supabase_client
