@@ -43,6 +43,8 @@ def is_market_too_far(activity: dict, title: str) -> bool:
     end_date = activity.get('end_date')
 
     if not end_date:
+        if "Up or Down" in title:
+            return False  # Mercados 15M — siempre corto plazo, permitir
         logger.info(f"⏭️  Skipping: no end_date (cannot verify expiry) | {title}")
         return True
 
