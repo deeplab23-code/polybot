@@ -27,6 +27,7 @@ _supabase_client: AsyncClient = None
 
 MAX_HOURS_TO_EXPIRY = 48
 MIN_PRICE = 0.10
+MIN_REWARD_RISK_RATIO = 1.5
 
 async def get_supabase() -> AsyncClient:
     global _supabase_client
@@ -119,6 +120,13 @@ def process_new_trade(activity: dict):
         if price < MIN_PRICE:
             logger.info(f"⏭️  Skipping: price {price:.3f} too low (min {MIN_PRICE})")
             return
+
+        # Filtro: ratio recompensa/riesgo minimo
+        if side == BUY:
+            potential_gain = (1 - price) / price
+            if potential_gain < MIN_REWARD_RISK_RATIO:
+                logger.info(f"Skipping: reward/risk {potential_gain:.2f} < {MIN_REWARD_RISK_RATIO} | {title}")
+                return
 
         # Filtro: mercado vencido o demasiado lejos
         if is_market_too_far(activity, title):
