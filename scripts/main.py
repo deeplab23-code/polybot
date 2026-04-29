@@ -264,6 +264,21 @@ def stop_loss_loop():
                     if initial_value <= 0 or cur_price <= 0 or size <= 0:
                         continue
 
+                    # Skip si el precio es demasiado bajo — no hay liquidez
+                    if cur_price < 0.05:
+                        continue
+
+                    # Skip si el mercado ya expiró o queda menos de 2 minutos
+                    end_date = pos.get('endDate')
+                    if end_date:
+                        try:
+                            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                            minutes_left = (end_dt - datetime.now(timezone.utc)).total_seconds() / 60
+                            if minutes_left < 2:
+                                continue
+                        except Exception:
+                            pass
+
                     loss_pct = (initial_value - current_value) / initial_value
 
                     if loss_pct >= STOP_LOSS_PCT:
