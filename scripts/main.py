@@ -29,6 +29,10 @@ MAX_HOURS_TO_EXPIRY = 48
 MIN_PRICE = 0.10
 MIN_REWARD_RISK_RATIO = 1.0
 
+# Lock para evitar race conditions al entrar en el mismo mercado simultaneamente
+_market_lock = threading.Lock()
+_active_condition_ids: set = set()
+
 async def get_supabase() -> AsyncClient:
     global _supabase_client
     if _supabase_client is None:
@@ -73,9 +77,13 @@ def is_market_too_far(activity: dict, title: str) -> bool:
     return False
 
 def is_already_in_market(condition_id: str, title: str) -> bool:
-    """Devuelve True si ya tenemos una posición abierta en este mercado (persiste en Supabase)."""
+    """Devuelve True si ya tenemos una posición abierta en este mercado (Supabase o lock en memoria)."""
     if not condition_id:
         return False
+    # Primero verificar lock en memoria (más rápido, evita race conditions)
+    if condition_id in _active_condition_ids:
+        logger.info(f"⏭️  Skipping: already have active position in market (memory lock) | {title}")
+        return True
     try:
         from copied_trades import supabase as ct_supabase, TABLE as CT_TABLE
         resp = ct_supabase.table(CT_TABLE)\
@@ -85,7 +93,8 @@ def is_already_in_market(condition_id: str, title: str) -> bool:
             .limit(1)\
             .execute()
         if resp.data:
-            logger.info(f"⏭️  Skipping: already have position in market | {title}")
+            logger.info(f"⏭️  Skipping: already have active position in market (condition_id: {condition_id[:10]}...)")
+            _active_condition_ids.add(condition_id)
             return True
     except Exception as e:
         logger.warning(f"is_already_in_market check failed: {e}")
@@ -160,6 +169,9 @@ def process_new_trade(activity: dict):
             if check_risk_constraints(total_exp, bot_usdc_size, market_exposure=market_exps.get(token_id, 0), trader_exposure=t_exp):
                 if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price, bot_usdc_size, condition_id):
                     return
+                # Añadir al lock en memoria inmediatamente
+                if condition_id:
+                    _active_condition_ids.add(condition_id)
                 bot_size_units = bot_usdc_size / price
                 logger.info(f"📤 Placing order: {side} {bot_size_units:.4f} units @ ${price} = ${bot_usdc_size:.2f}")
                 resp = make_order(price=price, size=bot_size_units, side=side, token_id=token_id)
