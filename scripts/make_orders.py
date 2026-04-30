@@ -48,7 +48,7 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
         execution_price = max(round(price * (1 - max_slippage), 2), 0.01)
         clob_side = Side.SELL
 
-    minimum_tokens = 5
+    minimum_tokens = 1
     max_cost = config.STAKE_MAX
 
     # Sizing fijo: ignoramos el size del trader, usamos siempre budget fijo
