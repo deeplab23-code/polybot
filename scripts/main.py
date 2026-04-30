@@ -25,7 +25,7 @@ key: str = config.SUPABASE_KEY
 TABLE_NAME_POSITIONS = config.TABLE_NAME_POSITIONS
 _supabase_client: AsyncClient = None
 
-MAX_HOURS_TO_EXPIRY = 48
+MAX_HOURS_TO_EXPIRY = 168
 MIN_PRICE = 0.10
 MIN_REWARD_RISK_RATIO = 1.0
 
@@ -48,18 +48,8 @@ def is_market_too_far(activity: dict, title: str) -> bool:
     end_date = activity.get('end_date')
 
     if not end_date:
-        if "Up or Down" in title:
-            return False  # Mercados 15M — siempre corto plazo, permitir
-        # Permitir mercados con fecha de hoy en el título
-        today = datetime.now(timezone.utc)
-        today_strs = [
-            today.strftime("%B %-d"),  # "April 29"
-            today.strftime("%b %-d"),  # "Apr 29"
-        ]
-        if any(s in title for s in today_strs):
-            return False
-        logger.info(f"⏭️  Skipping: no end_date (cannot verify expiry) | {title}")
-        return True
+        # Sin end_date — permitir todo (wallets selectivas de weekly/esports)
+        return False
 
     try:
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
