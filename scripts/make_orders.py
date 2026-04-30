@@ -70,13 +70,6 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
         logger.info(f"⏭️ Skipping: invalid size {size} or cost ${estimated_cost}")
         return None
 
-    # Validar ratio sobre precio de ejecución real
-    if clob_side == Side.BUY:
-        real_ratio = (1 - execution_price) / execution_price
-        if real_ratio < 1.0:
-            logger.info(f"⏭️ Skipping: execution price ${execution_price} ratio {real_ratio:.2f} < 1.0")
-            return None
-
     logger.info(f"Preparing {side} order: {size} tokens @ ${execution_price} = ${estimated_cost:.2f} | Token: {token_id[:16]}...")
 
     if config.DRY_RUN:
